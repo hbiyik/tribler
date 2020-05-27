@@ -365,7 +365,7 @@ class DownloadManager(TaskManager):
             ip_filter.add_rule(ip, ip, 0)
         lt_session.set_ip_filter(ip_filter)
 
-    async def get_metainfo(self, infohash, timeout=30, hops=None):
+    async def get_metainfo(self, infohash, timeout=30, hops=None, url=None):
         """
         Lookup metainfo for a given infohash. The mechanism works by joining the swarm for the infohash connecting
         to a few peers, and downloading the metadata for the torrent.
@@ -386,7 +386,7 @@ class DownloadManager(TaskManager):
         elif infohash in self.downloads:
             download = self.downloads[infohash]
         else:
-            tdef = TorrentDefNoMetainfo(infohash, 'metainfo request')
+            tdef = TorrentDefNoMetainfo(infohash, 'metainfo request', url)
             dcfg = DownloadConfig()
             dcfg.set_hops(self.tribler_session.config.get_default_number_hops() if hops is None else hops)
             dcfg.set_upload_mode(True)  # Upload mode should prevent libtorrent from creating files

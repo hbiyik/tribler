@@ -80,14 +80,14 @@ class TorrentInfoEndpoint(RESTEndpoint):
             if response.startswith(b'magnet'):
                 _, infohash, _ = parse_magnetlink(response)
                 if infohash:
-                    metainfo = await self.session.dlmgr.get_metainfo(infohash, timeout=60, hops=hops)
+                    metainfo = await self.session.dlmgr.get_metainfo(infohash, timeout=60, hops=hops, url=response)
             else:
                 metainfo = bdecode_compat(response)
         elif uri.startswith('magnet'):
             infohash = parse_magnetlink(uri)[1]
             if infohash is None:
                 return RESTResponse({"error": "missing infohash"}, status=HTTP_BAD_REQUEST)
-            metainfo = await self.session.dlmgr.get_metainfo(infohash, timeout=60, hops=hops)
+            metainfo = await self.session.dlmgr.get_metainfo(infohash, timeout=60, hops=hops, url=uri)
         else:
             return RESTResponse({"error": "invalid uri"}, status=HTTP_BAD_REQUEST)
 
