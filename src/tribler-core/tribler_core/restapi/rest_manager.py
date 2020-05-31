@@ -97,13 +97,13 @@ class RESTManager(TaskManager):
 
         api_port = self.session.config.get_http_api_port()
         if not self.session.config.get_http_api_retry_port():
-            self.site = web.TCPSite(runner, 'localhost', api_port)
+            self.site = web.TCPSite(runner, '0.0.0.0', api_port)
             await self.site.start()
         else:
             bind_attempts = 0
             while bind_attempts < 10:
                 try:
-                    self.site = web.TCPSite(runner, 'localhost', api_port + bind_attempts)
+                    self.site = web.TCPSite(runner, '0.0.0.0', api_port + bind_attempts)
                     await self.site.start()
                     self.session.config.set_http_api_port(api_port + bind_attempts)
                     break
