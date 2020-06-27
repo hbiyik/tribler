@@ -13,6 +13,7 @@ from tribler_core.modules.metadata_store.orm_bindings.channel_metadata import ch
 from tribler_core.modules.metadata_store.orm_bindings.channel_node import (
     COMMITTED,
     DIRTY_STATUSES,
+    LEGACY_ENTRY,
     NEW,
     TODELETE,
     UPDATED,
@@ -120,6 +121,19 @@ def define_binding(db):
         @property
         def contents_len(self):
             return orm.count(self.contents)
+
+        @db_session
+        def torrent_exists(self, infohash):
+            """
+            Return True if torrent with given infohash exists in the user channel
+            :param infohash: The infohash of the torrent
+            :return: True if torrent exists else False
+            """
+            return db.TorrentMetadata.exists(
+                lambda g: g.public_key == self.public_key
+                and g.infohash == database_blob(infohash)
+                and g.status != LEGACY_ENTRY
+            )
 
         @db_session
         def add_torrent_to_channel(self, tdef, extra_info=None):
