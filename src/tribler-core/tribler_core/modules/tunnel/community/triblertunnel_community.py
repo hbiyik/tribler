@@ -1,18 +1,26 @@
 import hashlib
+import math
 import sys
 import time
-from asyncio import Future, gather, sleep
+from asyncio import Future, TimeoutError as AsyncTimeoutError, open_connection, sleep
 from binascii import unhexlify
 from collections import Counter
 from distutils.version import LooseVersion
 
 from anydex.wallet.bandwidth_block import TriblerBandwidthBlock
 
+import async_timeout
+
 from ipv8.attestation.trustchain.block import EMPTY_PK
 from ipv8.messaging.anonymization.caches import CreateRequestCache
-from ipv8.messaging.anonymization.community import message_to_payload
+from ipv8.messaging.anonymization.community import message_to_payload, tc_lazy_wrapper_unsigned
 from ipv8.messaging.anonymization.hidden_services import HiddenTunnelCommunity
-from ipv8.messaging.anonymization.payload import NO_CRYPTO_PACKETS
+from ipv8.messaging.anonymization.payload import (
+    EstablishIntroPayload,
+    NO_CRYPTO_PACKETS,
+    decode_address,
+    encode_address,
+)
 from ipv8.messaging.anonymization.tunnel import (
     CIRCUIT_STATE_CLOSING,
     CIRCUIT_STATE_READY,
@@ -28,18 +36,30 @@ from ipv8.peer import Peer
 from ipv8.peerdiscovery.network import Network
 from ipv8.taskmanager import task
 
+import libtorrent as lt
+
 from tribler_common.simpledefs import DLSTATUS_DOWNLOADING, DLSTATUS_METADATA, DLSTATUS_SEEDING, DLSTATUS_STOPPED, NTFY
 
-from tribler_core.modules.tunnel.community.caches import BalanceRequestCache
+from tribler_core.modules.tunnel.community.caches import BalanceRequestCache, HTTPRequestCache
 from tribler_core.modules.tunnel.community.discovery import GoldenRatioStrategy
 from tribler_core.modules.tunnel.community.dispatcher import TunnelDispatcher
-from tribler_core.modules.tunnel.community.payload import BalanceRequestPayload, BalanceResponsePayload, PayoutPayload
+from tribler_core.modules.tunnel.community.payload import (
+    BalanceRequestPayload,
+    BalanceResponsePayload,
+    HTTPRequestPayload,
+    HTTPResponsePayload,
+    PayoutPayload,
+)
 from tribler_core.modules.tunnel.socks5.server import Socks5Server
 from tribler_core.utilities import path_util
 from tribler_core.utilities.unicode import hexlify
 from tribler_core.utilities.utilities import succeed
 
 DESTROY_REASON_BALANCE = 65535
+
+PEER_FLAG_EXIT_HTTP = 32768
+
+MAX_HTTP_PACKET_SIZE = 1400
 
 
 class TriblerTunnelCommunity(HiddenTunnelCommunity):
@@ -66,6 +86,7 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
         if self.tribler_session:
             if self.tribler_session.config.get_tunnel_community_exitnode_enabled():
                 self.settings.peer_flags.add(PEER_FLAG_EXIT_ANY)
+                self.settings.peer_flags.add(PEER_FLAG_EXIT_HTTP)
 
             if not socks_listen_ports:
                 socks_listen_ports = self.tribler_session.config.get_tunnel_community_socks5_listen_ports()
@@ -98,12 +119,16 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
             chr(25): self.on_relay_balance_request_cell,
             chr(26): self.on_balance_response_cell,
             chr(27): self.on_relay_balance_response_cell,
+            chr(28): self.on_http_request,
+            chr(29): self.on_http_response
         })
 
-        message_to_payload[u"balance-request"] = (24, BalanceRequestPayload)
-        message_to_payload[u"relay-balance-request"] = (25, BalanceRequestPayload)
-        message_to_payload[u"balance-response"] = (26, BalanceResponsePayload)
-        message_to_payload[u"relay-balance-response"] = (27, BalanceResponsePayload)
+        message_to_payload["balance-request"] = (24, BalanceRequestPayload)
+        message_to_payload["relay-balance-request"] = (25, BalanceRequestPayload)
+        message_to_payload["balance-response"] = (26, BalanceResponsePayload)
+        message_to_payload["relay-balance-response"] = (27, BalanceResponsePayload)
+        message_to_payload["http-request"] = (28, HTTPRequestPayload)
+        message_to_payload["http-response"] = (29, HTTPResponsePayload)
 
         NO_CRYPTO_PACKETS.extend([24, 26])
 
@@ -152,11 +177,11 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
         """
         We received the token balance of a circuit initiator. Check whether we can allocate a slot to this user.
         """
-        if not self.request_cache.has(u"balance-request", circuit_id):
+        if not self.request_cache.has("balance-request", circuit_id):
             self.logger.warning("Received token balance without associated request cache!")
             return
 
-        cache = self.request_cache.pop(u"balance-request", circuit_id)
+        cache = self.request_cache.pop("balance-request", circuit_id)
 
         lowest_balance = sys.maxsize
         lowest_index = -1
@@ -213,7 +238,7 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
         shared_secret, _, _ = self.crypto.generate_diffie_shared_secret(create_payload.key)
         self.relay_session_keys[circuit_id] = self.crypto.generate_session_keys(shared_secret)
 
-        self.send_cell([Peer(create_payload.node_public_key, previous_node_address)], u"balance-request",
+        self.send_cell(Peer(create_payload.node_public_key, previous_node_address), "balance-request",
                        BalanceRequestPayload(circuit_id))
 
         self.directions.pop(circuit_id, None)
@@ -250,12 +275,12 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
     def on_balance_request_cell(self, source_address, data, _):
         payload = self._ez_unpack_noauth(BalanceRequestPayload, data, global_time=False)
 
-        if self.request_cache.has(u"create", payload.circuit_id):
-            request = self.request_cache.get(u"create", payload.circuit_id)
+        if self.request_cache.has("create", payload.circuit_id):
+            request = self.request_cache.get("create", payload.circuit_id)
             forwarding_relay = RelayRoute(request.from_circuit_id, request.peer)
-            self.send_cell([forwarding_relay.peer.address], u"relay-balance-request",
+            self.send_cell(forwarding_relay.peer, "relay-balance-request",
                            BalanceRequestPayload(forwarding_relay.circuit_id))
-        elif self.request_cache.has(u"retry", payload.circuit_id):
+        elif self.request_cache.has("retry", payload.circuit_id):
             self.on_balance_request(payload)
         else:
             self.logger.warning("Circuit creation cache for id %s not found!", payload.circuit_id)
@@ -282,13 +307,13 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
         # We either send the response directly or relay the response to the last verified hop
         circuit = self.circuits[payload.circuit_id]
         if not circuit.hops:
-            self.increase_bytes_sent(circuit, self.send_cell([circuit.peer.address],
-                                                             u"balance-response",
+            self.increase_bytes_sent(circuit, self.send_cell(circuit.peer,
+                                                             "balance-response",
                                                              BalanceResponsePayload.from_half_block(
                                                                  latest_block, circuit.circuit_id)))
         else:
-            self.increase_bytes_sent(circuit, self.send_cell([circuit.peer.address],
-                                                             u"relay-balance-response",
+            self.increase_bytes_sent(circuit, self.send_cell(circuit.peer,
+                                                             "relay-balance-response",
                                                              BalanceResponsePayload.from_half_block(
                                                                  latest_block, circuit.circuit_id)))
 
@@ -309,8 +334,8 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
         # request cache and find the link to the next hop.
         for cache in self.request_cache._identifiers.values():
             if isinstance(cache, CreateRequestCache) and cache.from_circuit_id == payload.circuit_id:
-                self.send_cell([cache.to_peer.address],
-                               u"balance-response",
+                self.send_cell(cache.to_peer,
+                               "balance-response",
                                BalanceResponsePayload.from_half_block(block, cache.to_circuit_id))
 
     def readd_bittorrent_peers(self):
@@ -357,7 +382,7 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
 
         payload = PayoutPayload.from_half_block(block, circuit_id, base_amount).to_pack_list()
         packet = self._ez_pack(self._prefix, 23, [payload], False)
-        self.send_packet([peer], packet)
+        self.send_packet(peer, packet)
 
     def clean_from_slots(self, circuit_id):
         """
@@ -509,6 +534,14 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
         else:
             self.logger.error('Could not find download for adding hidden services peer %s:%d!', *address)
 
+    def on_establish_intro(self, source_address, data, circuit_id):
+        payload = self._ez_unpack_noauth(EstablishIntroPayload, data, global_time=False)
+        exists_before = payload.public_key in self.intro_point_for
+        super(TriblerTunnelCommunity, self).on_establish_intro(source_address, data, circuit_id)
+        # Check if an introduction point was just added
+        if not exists_before and payload.public_key in self.intro_point_for:
+            self.clean_from_slots(circuit_id)
+
     def on_rendezvous_established(self, source_address, data, circuit_id):
         super(TriblerTunnelCommunity, self).on_rendezvous_established(source_address, data, circuit_id)
 
@@ -564,6 +597,100 @@ class TriblerTunnelCommunity(HiddenTunnelCommunity):
 
     def get_lookup_info_hash(self, info_hash):
         return hashlib.sha1(b'tribler anonymous download' + hexlify(info_hash).encode('utf-8')).digest()
+
+    @tc_lazy_wrapper_unsigned(HTTPRequestPayload)
+    async def on_http_request(self, source_address, payload, circuit_id):
+        if circuit_id not in self.exit_sockets:
+            self.logger.warning("Received unexpected http-request")
+            return
+        if len([cache for cache in self.request_cache._identifiers.values()
+                if isinstance(cache, HTTPRequestCache) and cache.circuit_id == circuit_id]) > 5:
+            self.logger.warning("Too many HTTP requests coming from circuit %s")
+            return
+
+        self.logger.debug("Got http-request from %s", source_address)
+        target_address = decode_address(payload.target)
+
+        writer = None
+        try:
+            with async_timeout.timeout(3):
+                self.logger.debug("Opening TCP connection to %s", target_address)
+                reader, writer = await open_connection(*target_address)
+                writer.write(payload.request)
+                response = b''
+                while True:
+                    line = await reader.readline()
+                    response += line
+                    if not line.strip():
+                        # Read HTTP response body (1MB max)
+                        response += await reader.read(1024**2)
+                        break
+        except OSError:
+            self.logger.warning('Tunnel HTTP request failed')
+            return
+        except AsyncTimeoutError:
+            self.logger.warning('Tunnel HTTP request timed out')
+            return
+        finally:
+            if writer:
+                writer.close()
+
+        # Note that, depending on the libtorrent version, bdecode does not always raise
+        # an exception, sometimes it returns None instead.
+        try:
+            response_decoded = lt.bdecode(response.split(b'\r\n\r\n')[1])
+        except (IndexError, RuntimeError):
+            response_decoded = None
+
+        if response_decoded is None:
+            self.logger.warning('Tunnel HTTP request not allowed')
+            return
+
+        num_cells = math.ceil(len(response) / MAX_HTTP_PACKET_SIZE)
+        for i in range(num_cells):
+            self.send_cell(source_address, "http-response",
+                           HTTPResponsePayload(circuit_id, payload.identifier, i, num_cells,
+                                               response[i*MAX_HTTP_PACKET_SIZE:(i+1)*MAX_HTTP_PACKET_SIZE]))
+
+    @tc_lazy_wrapper_unsigned(HTTPResponsePayload)
+    def on_http_response(self, source_address, payload, circuit_id):
+        if not self.request_cache.has("http-request", payload.identifier):
+            self.logger.warning("Received unexpected http-response")
+            return
+        cache = self.request_cache.get("http-request", payload.identifier)
+        if cache.circuit_id != circuit_id:
+            self.logger.warning("Received http-response from wrong circuit")
+            return
+
+        self.logger.debug("Got http-response from %s", source_address)
+        if cache.add_response(payload):
+            self.request_cache.pop("http-request", payload.identifier)
+
+    async def perform_http_request(self, destination, request, hops=1):
+        # We need a circuit that supports HTTP requests, meaning that the circuit will have to end
+        # with a node that has the PEER_FLAG_EXIT_HTTP flag set.
+        allowed_peers = self.get_candidates(PEER_FLAG_EXIT_HTTP)
+        allowed_pks = [p.key.key_to_bin() for p in allowed_peers]
+        circuits = [c for c in self.circuits.values() if c.state == CIRCUIT_STATE_READY
+                    and c.hops[-1].public_key in allowed_pks
+                    and c.goal_hops == hops]
+
+        if circuits:
+            circuit = circuits[0]
+        elif allowed_peers:
+            circuit = self.create_circuit(hops, required_exit=allowed_peers[0])
+            if not circuit or not await circuit.ready:
+                raise RuntimeError('No HTTP circuit could be created')
+        else:
+            raise RuntimeError('No HTTP exits available')
+
+        cache = self.request_cache.add(HTTPRequestCache(self, circuit.circuit_id))
+        self.increase_bytes_sent(circuit, self.send_cell(circuit.peer, "http-request",
+                                                         HTTPRequestPayload(circuit.circuit_id,
+                                                                            cache.number,
+                                                                            encode_address(*destination),
+                                                                            request)))
+        return await cache.response_future
 
 
 class TriblerTunnelTestnetCommunity(TriblerTunnelCommunity):

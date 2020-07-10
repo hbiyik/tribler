@@ -414,7 +414,7 @@ class DownloadManager(TaskManager):
             metainfo = download.tdef.get_metainfo() or await wait_for(shield(download.future_metainfo), timeout)
             self._logger.info('Successfully retrieved metainfo for %s', infohash_hex)
             self.metainfo_cache[infohash] = {'time': timemod.time(), 'meta_info': metainfo}
-        except (CancelledError, TimeoutError):
+        except (CancelledError, asyncio.TimeoutError):
             metainfo = None
             self._logger.info('Failed to retrieve metainfo for %s', infohash_hex)
 
@@ -550,7 +550,7 @@ class DownloadManager(TaskManager):
             if self.dht_readiness_timeout > 0 and self._dht_ready_task is not None:
                 try:
                     await wait_for(shield(self._dht_ready_task), timeout=self.dht_readiness_timeout)
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     self._logger.warning("Timeout waiting for libtorrent DHT getting enough peers")
             ltsession.async_add_torrent(encode_atp(atp))
         return await download.future_added

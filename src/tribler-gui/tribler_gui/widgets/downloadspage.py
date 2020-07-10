@@ -388,8 +388,9 @@ class DownloadsPage(QWidget):
     def change_anonymity(self, hops):
         for selected_item in self.selected_items:
             infohash = selected_item.download_info["infohash"]
-            TriblerNetworkRequest("downloads/%s" % infohash, self.on_change_anonymity,
-                                  method='PATCH', data={"anon_hops": hops})
+            TriblerNetworkRequest(
+                "downloads/%s" % infohash, self.on_change_anonymity, method='PATCH', data={"anon_hops": hops}
+            )
 
     def on_explore_files(self):
         for selected_item in self.selected_items:

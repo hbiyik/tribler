@@ -364,6 +364,8 @@ class Session(TaskManager):
                 text_long = text_long + "\n--LONG TEXT--\n" + buffer.getvalue()
         text_long = text_long + "\n--CONTEXT--\n" + str(context)
 
+        self._logger.error("Unhandled exception occurred! %s", text_long)
+
         if self.api_manager and len(text_long) > 0:
             self.api_manager.get_endpoint('events').on_tribler_exception(text_long)
             self.api_manager.get_endpoint('state').on_tribler_exception(text_long)
@@ -532,6 +534,11 @@ class Session(TaskManager):
             await self.resource_monitor.stop()
         self.resource_monitor = None
 
+        if self.bootstrap:
+            # We shutdown the bootstrap module before IPv8 since it uses the DHTCommunity.
+            await self.bootstrap.shutdown()
+        self.bootstrap = None
+
         self.tracker_manager = None
 
         if self.tunnel_community and self.trustchain_community:
@@ -561,10 +568,6 @@ class Session(TaskManager):
 
         self.notify_shutdown_state("Saving configuration...")
         self.config.write()
-
-        if self.bootstrap:
-            await self.bootstrap.shutdown()
-        self.bootstrap = None
 
         if self.dlmgr:
             await self.dlmgr.shutdown()

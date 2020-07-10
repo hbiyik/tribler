@@ -96,4 +96,3 @@ class TestGoldenRatio(TestCase):
         strategy.take_step()
 
         overlay.send_introduction_request.assert_called_once_with(peer1)
-

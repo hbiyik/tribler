@@ -245,7 +245,7 @@ class Stream: # pylint: disable=too-many-instance-attributes
         """
         Close this class gracefully
         """
-        # if the prepare coro has never been awaited (stream never enabled), close the coro
+        # Close the coroutine. Unnecessary calls should be harmless.
         self.__prepare_coro.close()
         self.disable()
 
