@@ -276,7 +276,7 @@ class TestAsServer(AbstractServer):
         """ unittest test tear down code """
         if self.session is not None:
             if isinstance(self.session.dlmgr, DownloadManager):
-                self.session.dlmgr.shutdown = partial(self.session.dlmgr.shutdown, timeout=.1)
+                self.session.dlmgr.shutdown = partial(self.session.dlmgr.shutdown, timeout=.9)
             await self.session.shutdown()
             self.session = None
 

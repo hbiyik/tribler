@@ -44,18 +44,20 @@ class TestDownload(TestAsServer):
 
         return tdef
 
-    def test_get_magnet_link_none(self):
+    async def test_get_magnet_link_none(self):
         tdef = self.create_tdef()
 
         dl = Download(self.session, tdef)
         link = dl.get_magnet_link()
+        await dl.shutdown()
         self.assertEqual(None, link, "Magnet link was not none while it should be!")
 
-    def test_get_tdef(self):
+    async def test_get_tdef(self):
         tdef = self.create_tdef()
 
         dl = Download(self.session, None)
         dl.set_def(tdef)
+        await dl.shutdown()
         self.assertEqual(dl.tdef, tdef, "Torrent definitions were not equal!")
 
     @timeout(20)
@@ -72,6 +74,7 @@ class TestDownload(TestAsServer):
         dl.config = Mock()
         dl.handle = Mock()
         dl.resume()
+        await dl.shutdown()
         dl.handle.resume.assert_called()
 
     async def test_resume_in_upload_mode(self):
@@ -84,6 +87,7 @@ class TestDownload(TestAsServer):
         dl.resume()
         dl.handle.resume.assert_called()
         dl.handle.set_upload_mode.assert_called_with(dl.get_upload_mode())
+        await dl.shutdown()
 
     @timeout(20)
     async def test_multifile_torrent(self):
@@ -124,6 +128,7 @@ class TestDownload(TestAsServer):
         dl.config.set_engineresumedata({b"save_path": "some_local_dir",
                                         b"info-hash": b'\x00' * 20})
         dl.setup()
+        await dl.shutdown()
 
     @timeout(10)
     async def test_save_resume(self):
@@ -142,9 +147,10 @@ class TestDownload(TestAsServer):
         basename = hexlify(tdef.get_infohash()) + '.conf'
         filename = self.session.dlmgr.get_checkpoint_dir() / basename
         dcfg = DownloadConfig.load(filename)
+        await dl.shutdown()
         self.assertEqual(tdef.get_infohash(), dcfg.get_engineresumedata().get(b'info-hash'))
 
-    def test_move_storage(self):
+    async def test_move_storage(self):
         """
         Test that move_storage method works as expected by Libtorrent
         """
@@ -160,6 +166,7 @@ class TestDownload(TestAsServer):
         dl.handle.move_storage = mock_move
 
         dl.move_storage(Path("some_path"))
+        await dl.shutdown()
         self.assertEquals("some_path", result[0])
         self.assertTrue("some_path", dl.config.get_dest_dir().name)
 
@@ -167,6 +174,7 @@ class TestDownload(TestAsServer):
         dl = Download(self.session, TorrentDefNoMetainfo(random_infohash(), "some_torrent"))
         dl.setup()
         dl.move_storage(Path("some_path"))
+        await dl.shutdown()
         self.assertEquals("some_path", result[0])
         self.assertTrue("some_path", dl.config.get_dest_dir().name)
 
@@ -186,6 +194,7 @@ class TestDownload(TestAsServer):
 
         # This shouldn't either
         await dl.checkpoint()
+        await dl.shutdown()
         self.assertFalse(filename.is_file())
         dl.stop()
 
@@ -197,6 +206,7 @@ class TestDownload(TestAsServer):
         basename = hexlify(tdef.get_infohash()) + '.conf'
         filename = self.session.dlmgr.get_checkpoint_dir() / basename
         await dl.checkpoint()
+        await dl.shutdown()
         self.assertTrue(filename.is_file())
 
 
@@ -238,6 +248,7 @@ class TestDownloadNoSession(TriblerCoreTest):
 
     async def tearDown(self):
         await self.download.shutdown_task_manager()
+        await self.download.shutdown()
         await super(TestDownloadNoSession, self).tearDown()
 
     def test_selected_files(self):
@@ -266,7 +277,7 @@ class TestDownloadNoSession(TriblerCoreTest):
         mocked_set_file_prios.called = False
         self.assertFalse(mocked_set_file_prios.called)
 
-    def test_selected_files_no_files(self):
+    async def test_selected_files_no_files(self):
         """
         Test that no files are selected if torrent info is not available.
         """
@@ -519,6 +530,7 @@ class TestDownloadNoSession(TriblerCoreTest):
         with self.assertRaises(SaveResumeDataError):
             await dl.wait_for_alert('save_resume_data_alert', None,
                                     'save_resume_data_failed_alert', lambda _: SaveResumeDataError())
+        await dl.shutdown()
 
     def test_on_state_changed(self):
         self.download.handle.status = lambda: Mock(error=None)

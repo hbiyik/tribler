@@ -84,7 +84,7 @@ class TestDownloadManager(AbstractServer):
 
 
     async def tearDown(self):
-        await self.dlmgr.shutdown(timeout=0)
+        await self.dlmgr.shutdown(timeout=.9)
         self.assertTrue((self.session_base_dir / 'lt.state').exists())
         await super(TestDownloadManager, self).tearDown()
 
@@ -264,7 +264,6 @@ class TestDownloadManager(AbstractServer):
         download = self.dlmgr.start_download(tdef=TorrentDefNoMetainfo(infohash, ''), checkpoint_disabled=True)
         handle = await download.get_handle()
         self.assertEqual(handle, mock_handle)
-        self.dlmgr.downloads.clear()
 
         # Test waiting on DHT getting enough nodes and adding the torrent after timing out
         self.dlmgr.dht_readiness_timeout = 0.5
@@ -313,7 +312,6 @@ class TestDownloadManager(AbstractServer):
         download = self.dlmgr.start_download(tdef=TorrentDefNoMetainfo(infohash, 'name'), checkpoint_disabled=True)
         handle = await download.get_handle()
         self.assertEqual(handle, mock_handle)
-        self.dlmgr.downloads.clear()
 
     @timeout(20)
     async def test_start_download_existing_download(self):
@@ -332,7 +330,7 @@ class TestDownloadManager(AbstractServer):
 
         download = self.dlmgr.start_download(tdef=TorrentDefNoMetainfo(infohash, 'name'), checkpoint_disabled=True)
         self.assertEqual(download, mock_download)
-        self.dlmgr.downloads.clear()
+        self.dlmgr.downloads.pop(infohash)
 
     async def test_start_download_no_ti_url(self):
         """
