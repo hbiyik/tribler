@@ -85,13 +85,13 @@ if sys.platform == "win32":
 elif is_android():
 
     def get_home_dir():
-        return path_util.realpath(str(os.environ['EXTERNAL_STORAGE']))
+        return path_util.realpath(Path(os.environ['ANDROID_PRIVATE']))
 
     def get_appstate_dir():
-        return path_util.realpath(os.environ['ANDROID_PRIVATE'] / u'../.Tribler')
+        return path_util.realpath(Path(os.environ['ANDROID_PRIVATE']))
 
     def get_picture_dir():
-        return get_home_dir() / u'DCIM'
+        return get_home_dir()
 
     def get_desktop_dir():
         return get_home_dir()
