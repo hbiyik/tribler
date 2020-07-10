@@ -1,5 +1,6 @@
 import logging
 import os
+import traceback
 
 from aiohttp import web
 
@@ -41,6 +42,7 @@ async def error_middleware(request, handler):
             raise Exception('Tribler is shutting down')
         response = await handler(request)
     except Exception as e:
+        print(traceback.format_exc())
         return RESTResponse({"error": {
             "handled": False,
             "code": e.__class__.__name__,
