@@ -13,7 +13,7 @@ from marshmallow.fields import Boolean, Dict, Integer, String
 
 from pony.orm import db_session
 
-from tribler_core.modules.libtorrent.torrentdef import TorrentDef
+from tribler_core.modules.libtorrent.torrentdef import TorrentDef, TorrentDefNoMetainfo
 from tribler_core.modules.metadata_store.orm_bindings.channel_node import DIRTY_STATUSES, NEW
 from tribler_core.modules.metadata_store.restapi.metadata_endpoint_base import MetadataEndpointBase
 from tribler_core.modules.metadata_store.restapi.metadata_schema import ChannelSchema
@@ -245,6 +245,8 @@ class ChannelsEndpoint(ChannelsEndpointBase):
                 'torrents_dir': (String, 'Add all .torrent files from a chosen directory'),
                 'recursive': (Boolean, 'Toggle recursive scanning of the chosen directory for .torrent files'),
                 'description': (String, 'Description for the torrent'),
+                'filesize': (Integer, "Filesize of the torrent file, this parameter is used for "
+                                      "skipping metadata check when uri is a magnet link"),
             }
         )
     )
@@ -278,10 +280,18 @@ class ChannelsEndpoint(ChannelsEndpointBase):
                 ):
                     return RESTResponse({"added": 1})
 
-                meta_info = await self.session.dlmgr.get_metainfo(xt, timeout=30, url=uri)
-                if not meta_info:
-                    raise RuntimeError("Metainfo timeout")
-                tdef = TorrentDef.load_from_dict(meta_info)
+                filesize = parameters.get("filesize")
+                if filesize and not (isinstance(filesize, int) or int is None):
+                    return RESTResponse({"error": "filesize must be an integer"},
+                                        status=HTTP_BAD_REQUEST,)
+                if filesize:
+                    dn, xt, _ = parse_magnetlink(uri)
+                    tdef = TorrentDefNoMetainfo(xt, dn, uri, filesize)
+                else:
+                    meta_info = await self.session.dlmgr.get_metainfo(xt, timeout=30, url=uri)
+                    if not meta_info:
+                        raise RuntimeError("Metainfo timeout")
+                    tdef = TorrentDef.load_from_dict(meta_info)
             else:
                 return RESTResponse({"error": "unknown uri type"}, status=HTTP_BAD_REQUEST)
 

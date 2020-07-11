@@ -2,6 +2,7 @@
 Author(s): Arno Bakker
 """
 import logging
+import time
 from hashlib import sha1
 
 import aiohttp
@@ -479,12 +480,14 @@ class TorrentDefNoMetainfo(object):
     implemented.
     """
 
-    def __init__(self, infohash, name, url=None):
+    def __init__(self, infohash, name, url=None, filesize=0):
         assert isinstance(infohash, bytes), "INFOHASH has invalid type: %s" % type(infohash)
         assert len(infohash) == INFOHASH_LENGTH, "INFOHASH has invalid length: %d" % len(infohash)
         self.infohash = infohash
         self.name = name
         self.url = url
+        self.filesize = filesize
+        self.created = time.time()
 
     def get_name(self):
         return self.name
@@ -493,7 +496,7 @@ class TorrentDefNoMetainfo(object):
         return self.infohash
 
     def get_length(self, selectedfiles=None):
-        return 0
+        return self.filesize
 
     def get_metainfo(self):
         return None
@@ -525,8 +528,16 @@ class TorrentDefNoMetainfo(object):
             return tuple(trs)
         return ()
 
+    def get_tracker(self):
+        for tracker in self.get_trackers_as_single_tuple():
+            return tracker
+        return ''
+
     def is_private(self):
         return False
 
     def get_nr_pieces(self):
         return 0
+
+    def get_creation_date(self):
+        return self.created

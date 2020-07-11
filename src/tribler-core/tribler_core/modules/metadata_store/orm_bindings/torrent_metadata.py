@@ -8,6 +8,7 @@ from pony.orm import db_session
 
 from tribler_core.modules.category_filter.category import default_category_filter
 from tribler_core.modules.category_filter.family_filter import default_xxx_filter
+from tribler_core.modules.libtorrent.torrentdef import TorrentDefNoMetainfo
 from tribler_core.modules.metadata_store.orm_bindings.channel_node import COMMITTED
 from tribler_core.modules.metadata_store.serialization import EPOCH, REGULAR_TORRENT, TorrentMetadataPayload
 from tribler_core.utilities.tracker_utils import get_uniformed_tracker_url
@@ -26,10 +27,12 @@ def tdef_to_metadata_dict(tdef):
     Helper function to create a TorrentMetadata-compatible dict from TorrentDef
     """
     # We only want to determine the type of the data. XXX filtering is done by the receiving side
-    try:
-        tags = default_category_filter.calculateCategory(tdef.metainfo, tdef.get_name_as_unicode())
-    except UnicodeDecodeError:
-        tags = "Unknown"
+    tags = "Unknown"
+    if not isinstance(tdef, TorrentDefNoMetainfo):
+        try:
+            tags = default_category_filter.calculateCategory(tdef.metainfo, tdef.get_name_as_unicode())
+        except UnicodeDecodeError:
+            pass
 
     try:
         torrent_date = datetime.fromtimestamp(tdef.get_creation_date())
