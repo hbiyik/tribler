@@ -100,6 +100,7 @@ class TunnelDispatcher(object):
         except RuntimeError as e:
             self._logger.info('Failed to get HTTP response using tunnels: %s', e)
             return
+
         if response:
             tcp_connection.transport.write(response)
 
