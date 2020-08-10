@@ -15,6 +15,7 @@ from tribler_core.modules.metadata_store.serialization import (
     DELETED,
     DeletedMetadataPayload,
 )
+from tribler_core.modules.metadata_store.dbtools import DBExecutor
 from tribler_core.utilities.path_util import str_path
 from tribler_core.utilities.unicode import hexlify
 
@@ -92,6 +93,7 @@ def define_binding(db, logger=None, key=None):
         # In other words, it does not depend on the Tribler instance that created it.
         # ACHTUNG! On object creation, Pony does not check if discriminator is wrong for the created ORM type!
         nonpersonal_attributes = ('metadata_type',)
+        dbexecutor = DBExecutor(db)
 
         def __init__(self, *args, **kwargs):
             """

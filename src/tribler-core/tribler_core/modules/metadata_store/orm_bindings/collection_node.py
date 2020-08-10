@@ -19,7 +19,8 @@ from tribler_core.modules.metadata_store.orm_bindings.channel_node import (
     UPDATED,
 )
 from tribler_core.modules.metadata_store.orm_bindings.torrent_metadata import tdef_to_metadata_dict
-from tribler_core.modules.metadata_store.serialization import COLLECTION_NODE, CollectionNodePayload
+from tribler_core.modules.metadata_store.serialization import COLLECTION_NODE, REGULAR_TORRENT, CollectionNodePayload
+from tribler_core.modules.metadata_store.dbtools import DBExecutor
 from tribler_core.utilities.random_utils import random_infohash
 
 
@@ -294,8 +295,7 @@ def define_binding(db):
                 return {}
             return children
 
-        def iter_nodes_to_commit(self, all=False):
-            set_sql_debug(True, True)
+        async def iter_nodes_to_commit(self, nofilter=False):
             # optimize this, we dont need all columns, fewer the columns faster the sql execution
             # for cleanness keep row order same here even some rows are removed
             cols = ["rowid", "metadata_type", "reserved_flags", "origin_id", "public_key", "id_",
@@ -355,7 +355,7 @@ def define_binding(db):
             # still recusriveness depth is an important KPI for performance.
 
             nodecolumns = ",".join(["ChannelNode.%s" % x for x in cols])
-            if all:
+            if nofilter:
                 rec_select = """WITH recursive
                                 NODES(%s) AS (
                                     SELECT %s  FROM ChannelNode 
@@ -397,35 +397,7 @@ def define_binding(db):
                                            select_with_count
                                            )
 
-            import time
-            import sqlite3
-            t1 = time.time()
-            # We work directly with connection object to verify that Sqlite3.Row is the row factory
-            # I dont think theres a cleaner way of doing it with pony
-            # TO-DO: We can save some cpu cycles here by declaring PARSE_DECLTYPES on sqlite3.connect
-            # instead of runtime conversion of datetime values returned from DB as string.
-            # but dont think this is possible without modfying pony.
-            cache = db._get_cache()
-            connection = cache.prepare_connection_for_query_execution()
-            if not hasattr(connection, "row_factory") or connection.row_factory is None:
-                connection.row_factory = sqlite3.Row
-            cur = connection.cursor()
-            # only below line will block the reactor, and this is where the magic happens
-            # and we outsource all kind of recursive cpu heavy operations to c level sqlite library
-            # to prevent reactor block, the cursor can be called on a thread, however be carefull
-            # about the concurrency!
-            cur.execute(rec_select)
-            print(time.time() - t1)
-
-            # we deliberately iterate over each single row, to leverage low memory consumption
-            # in python side, all the table should be in the memory of sqlite not tribler,
-            # when we are done with the row, it is GC handled in py, *hopefully*
-            # this way we remove 1MB limit for mdblob size limit.
-            while True:
-                rec = cur.fetchone()
-                if not rec:
-                    break
-                yield rec
+            return await self.dbexecutor.execute(rec_select)
 
         @staticmethod
         @db_session
